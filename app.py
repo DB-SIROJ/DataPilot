@@ -179,7 +179,21 @@ def page_upload_overview():
 # =====================================================
 # PAGE B
 # =====================================================
-    # Missing Values
+   def page_cleaning():
+    st.title("🧹 Cleaning Studio")
+
+    if st.session_state["df"] is None:
+        st.warning("Upload data first.")
+        return
+
+    df = st.session_state["df"].copy()
+    all_cols = df.columns.tolist()
+    num_cols = numeric_columns(df)
+    cat_cols = categorical_columns(df)
+
+    st.dataframe(df.head(10), use_container_width=True)
+
+    # 1. Missing Values
     st.subheader("1. Missing Values")
 
     select_all_mv = st.checkbox("Select all columns for missing value handling")
@@ -250,9 +264,10 @@ def page_upload_overview():
             st.success("Missing value action applied.")
             st.rerun()
 
-    # Duplicates
+    # 2. Duplicates
     st.subheader("2. Duplicates")
     dup_subset = st.multiselect("Subset columns for duplicate check (optional)", all_cols)
+
     if st.button("Remove Duplicates"):
         save_history()
         before = len(df)
@@ -260,15 +275,16 @@ def page_upload_overview():
             df = df.drop_duplicates(subset=dup_subset)
         else:
             df = df.drop_duplicates()
+
         st.session_state["df"] = df
         add_log("Remove duplicates", f"Removed {before - len(df)} rows", dup_subset)
         st.success("Duplicates removed.")
         st.rerun()
 
-    # Data Type Conversion
+    # 3. Data Type Conversion
     st.subheader("3. Data Type Conversion")
     type_col = st.selectbox("Column to convert", all_cols, key="type_col")
-    target_type = st.selectbox("Convert to", ["numeric", "category", "datetime", "string"])
+    target_type = st.selectbox("Convert to", ["numeric", "category", "datetime", "string"], key="target_type")
     dt_format = st.text_input("Datetime format (optional)", key="dt_format")
 
     if st.button("Convert Column Type"):
@@ -279,7 +295,11 @@ def page_upload_overview():
             elif target_type == "category":
                 df[type_col] = df[type_col].astype("category")
             elif target_type == "datetime":
-                df[type_col] = pd.to_datetime(df[type_col], format=dt_format if dt_format else None, errors="coerce")
+                df[type_col] = pd.to_datetime(
+                    df[type_col],
+                    format=dt_format if dt_format else None,
+                    errors="coerce"
+                )
             elif target_type == "string":
                 df[type_col] = df[type_col].astype(str)
 
@@ -290,16 +310,17 @@ def page_upload_overview():
         except Exception as e:
             st.error(f"Conversion error: {e}")
 
-    # Categorical Cleaning
+    # 4. Categorical Cleaning
     st.subheader("4. Categorical Cleaning")
     if cat_cols:
-        cat_col = st.selectbox("Categorical column", cat_cols)
-        cat_action = st.selectbox("Standardize text", ["None", "Lower", "Upper", "Title", "Trim"])
-        old_val = st.text_input("Old value")
-        new_val = st.text_input("New value")
+        cat_col = st.selectbox("Categorical column", cat_cols, key="cat_col")
+        cat_action = st.selectbox("Standardize text", ["None", "Lower", "Upper", "Title", "Trim"], key="cat_action")
+        old_val = st.text_input("Old value", key="old_val")
+        new_val = st.text_input("New value", key="new_val")
 
         if st.button("Apply Categorical Cleaning"):
             save_history()
+
             if cat_action == "Lower":
                 df[cat_col] = df[cat_col].astype(str).str.lower()
             elif cat_action == "Upper":
@@ -319,12 +340,12 @@ def page_upload_overview():
     else:
         st.info("No categorical columns found.")
 
-    # Outliers
+    # 5. Outlier Handling
     st.subheader("5. Outlier Handling")
     if num_cols:
-        out_col = st.selectbox("Numeric column for outliers", num_cols)
-        out_method = st.selectbox("Detection method", ["IQR", "Z-score"])
-        out_action = st.selectbox("Action for outliers", ["Remove outlier rows", "Cap / Winsorize"])
+        out_col = st.selectbox("Numeric column for outliers", num_cols, key="out_col")
+        out_method = st.selectbox("Detection method", ["IQR", "Z-score"], key="out_method")
+        out_action = st.selectbox("Action for outliers", ["Remove outlier rows", "Cap / Winsorize"], key="out_action")
 
         if st.button("Apply Outlier Handling"):
             save_history()
@@ -343,11 +364,11 @@ def page_upload_overview():
     else:
         st.info("No numeric columns found.")
 
-    # Scaling
+    # 6. Scaling / Normalization
     st.subheader("6. Scaling / Normalization")
     if num_cols:
-        scale_cols = st.multiselect("Columns to scale", num_cols)
-        scale_method = st.selectbox("Scaling method", ["MinMax", "Z-score"])
+        scale_cols = st.multiselect("Columns to scale", num_cols, key="scale_cols")
+        scale_method = st.selectbox("Scaling method", ["MinMax", "Z-score"], key="scale_method")
 
         if st.button("Apply Scaling"):
             if not scale_cols:
@@ -372,7 +393,7 @@ def page_upload_overview():
     else:
         st.info("No numeric columns found.")
 
-    # Column Operations
+    # 7. Column Operations
     st.subheader("7. Column Operations")
     rename_col = st.selectbox("Column to rename", all_cols, key="rename_col")
     new_name = st.text_input("New column name", key="new_name")
@@ -394,7 +415,6 @@ def page_upload_overview():
         add_log("Drop column", drop_col, [drop_col])
         st.success("Column dropped.")
         st.rerun()
-
 
 # =====================================================
 # PAGE C
