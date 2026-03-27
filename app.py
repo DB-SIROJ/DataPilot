@@ -1,297 +1,538 @@
-import streamlit as st
+import io
+import json
+from datetime import datetime
+
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
+import streamlit as st
 
-st.set_page_config(page_title="Data Wrangler App", layout="wide")
+st.set_page_config(page_title="AI-Assisted Data Wrangler & Visualizer", layout="wide")
 
-# -----------------------
-# SESSION STATE INIT
-# -----------------------
-if "df" not in st.session_state:
+
+# =====================================================
+# SESSION STATE
+# =====================================================
+def init_state():
+    if "df" not in st.session_state:
+        st.session_state["df"] = None
+    if "original_df" not in st.session_state:
+        st.session_state["original_df"] = None
+    if "history" not in st.session_state:
+        st.session_state["history"] = []
+    if "log" not in st.session_state:
+        st.session_state["log"] = []
+    if "file_name" not in st.session_state:
+        st.session_state["file_name"] = None
+
+
+def reset_session():
     st.session_state["df"] = None
-
-if "log" not in st.session_state:
+    st.session_state["original_df"] = None
+    st.session_state["history"] = []
     st.session_state["log"] = []
+    st.session_state["file_name"] = None
 
-# -----------------------
-# SIDEBAR
-# -----------------------
-page = st.sidebar.selectbox("Choose Page", [
-    "Upload & Overview",
-    "Cleaning Studio",
-    "Visualization",
-    "Export & Report"
-])
 
-# -----------------------
-# PAGE A — Upload
-# -----------------------
-if page == "Upload & Overview":
+def save_history():
+    if st.session_state["df"] is not None:
+        st.session_state["history"].append(st.session_state["df"].copy())
 
+
+def undo_last_step():
+    if st.session_state["history"]:
+        st.session_state["df"] = st.session_state["history"].pop()
+
+
+def add_log(action, details="", columns=None):
+    st.session_state["log"].append({
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "action": action,
+        "details": details,
+        "columns": columns if columns else []
+    })
+
+
+# =====================================================
+# HELPERS
+# =====================================================
+@st.cache_data
+def load_data(file_name, file_bytes):
+    file_name = file_name.lower()
+    buffer = io.BytesIO(file_bytes)
+
+    if file_name.endswith(".csv"):
+        return pd.read_csv(buffer)
+    elif file_name.endswith(".xlsx"):
+        return pd.read_excel(buffer)
+    elif file_name.endswith(".json"):
+        return pd.read_json(buffer)
+    else:
+        raise ValueError("Unsupported file type")
+
+
+def numeric_columns(df):
+    return df.select_dtypes(include=["number"]).columns.tolist()
+
+
+def categorical_columns(df):
+    return df.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+
+
+def make_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="cleaned_data")
+    return output.getvalue()
+
+
+def winsorize_series(series, low_q=0.01, high_q=0.99):
+    low = series.quantile(low_q)
+    high = series.quantile(high_q)
+    return series.clip(lower=low, upper=high)
+
+
+def iqr_outlier_mask(series):
+    s = pd.to_numeric(series, errors="coerce")
+    q1 = s.quantile(0.25)
+    q3 = s.quantile(0.75)
+    iqr = q3 - q1
+    low = q1 - 1.5 * iqr
+    high = q3 + 1.5 * iqr
+    return (s < low) | (s > high)
+
+
+def zscore_outlier_mask(series):
+    s = pd.to_numeric(series, errors="coerce")
+    std = s.std(ddof=0)
+    if std == 0 or pd.isna(std):
+        return pd.Series([False] * len(series), index=series.index)
+    z = (s - s.mean()) / std
+    return z.abs() > 3
+
+
+# =====================================================
+# PAGE A
+# =====================================================
+def page_upload_overview():
     st.title("📊 Upload & Overview")
 
-    file = st.file_uploader("Upload CSV, Excel, or JSON", type=["csv", "xlsx", "json"])
+    uploaded_file = st.file_uploader("Upload CSV, Excel, or JSON", type=["csv", "xlsx", "json"])
 
-    if file is not None:
+    if uploaded_file is not None:
+        try:
+            df = load_data(uploaded_file.name, uploaded_file.getvalue())
+            st.session_state["df"] = df.copy()
+            st.session_state["original_df"] = df.copy()
+            st.session_state["history"] = []
+            st.session_state["log"] = []
+            st.session_state["file_name"] = uploaded_file.name
+            add_log("Load file", uploaded_file.name, list(df.columns))
+            st.success("File uploaded successfully.")
+        except Exception as e:
+            st.error(f"Error loading file: {e}")
 
-        if file.name.endswith(".csv"):
-            df = pd.read_csv(file)
-        elif file.name.endswith(".xlsx"):
-            df = pd.read_excel(file)
-        elif file.name.endswith(".json"):
-            df = pd.read_json(file)
+    if st.session_state["df"] is None:
+        st.info("Please upload a dataset to begin.")
+        return
 
-        st.session_state["df"] = df
-        st.session_state["log"] = []  # reset log
+    df = st.session_state["df"]
 
-        st.success("File uploaded!")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Rows", df.shape[0])
+    c2.metric("Columns", df.shape[1])
+    c3.metric("Duplicate Rows", int(df.duplicated().sum()))
 
-        col1, col2 = st.columns(2)
-        col1.metric("Rows", df.shape[0])
-        col2.metric("Columns", df.shape[1])
+    st.subheader("Column Types")
+    dtype_df = pd.DataFrame({
+        "Column": df.columns,
+        "Data Type": df.dtypes.astype(str)
+    })
+    st.dataframe(dtype_df, use_container_width=True)
 
-        st.subheader("Column Types")
-        st.dataframe(df.dtypes)
+    st.subheader("Preview")
+    st.dataframe(df.head(10), use_container_width=True)
 
-        st.subheader("Preview")
-        st.dataframe(df.head())
+    st.subheader("Missing Values")
+    missing_df = pd.DataFrame({
+        "Column": df.columns,
+        "Missing Count": df.isnull().sum().values,
+        "Missing Percentage": (df.isnull().mean() * 100).round(2).values
+    })
+    st.dataframe(missing_df, use_container_width=True)
 
-        st.subheader("Missing Values")
-        st.dataframe(df.isnull().sum())
+    st.subheader("Numeric Summary")
+    num_df = df.select_dtypes(include="number")
+    if not num_df.empty:
+        st.dataframe(num_df.describe(), use_container_width=True)
+    else:
+        st.info("No numeric columns found.")
 
-        st.subheader("Duplicates")
-        st.write(df.duplicated().sum())
+    st.subheader("Categorical Summary")
+    cat_df = df.select_dtypes(include=["object", "category", "bool"])
+    if not cat_df.empty:
+        st.dataframe(cat_df.astype(str).describe(), use_container_width=True)
+    else:
+        st.info("No categorical columns found.")
 
-# -----------------------
-# PAGE B — Cleaning
-# -----------------------
-elif page == "Cleaning Studio":
 
+# =====================================================
+# PAGE B
+# =====================================================
+def page_cleaning():
     st.title("🧹 Cleaning Studio")
 
     if st.session_state["df"] is None:
-        st.warning("Upload data first")
-    else:
-        df = st.session_state["df"]
+        st.warning("Upload data first.")
+        return
 
-        st.dataframe(df.head())
+    df = st.session_state["df"].copy()
+    all_cols = df.columns.tolist()
+    num_cols = numeric_columns(df)
+    cat_cols = categorical_columns(df)
 
-        # -------- Missing --------
-        st.subheader("Missing Values")
+    st.dataframe(df.head(10), use_container_width=True)
 
-        col = st.selectbox("Column", df.columns)
-        action = st.selectbox("Action", [
-            "Do nothing",
-            "Drop rows",
-            "Fill mean",
-            "Fill median",
-            "Fill value"
-        ])
+    # Missing Values
+    st.subheader("1. Missing Values")
+    mv_col = st.selectbox("Column for missing values", all_cols)
+    mv_action = st.selectbox(
+        "Action",
+        ["Do nothing", "Drop rows", "Fill mean", "Fill median", "Fill mode", "Fill value", "Forward fill", "Backward fill"]
+    )
+    fill_value = ""
+    if mv_action == "Fill value":
+        fill_value = st.text_input("Custom value")
 
-        value = None
-        if action == "Fill value":
-            value = st.text_input("Enter value")
+    if st.button("Apply Missing Handling"):
+        save_history()
+        if mv_action == "Drop rows":
+            df = df.dropna(subset=[mv_col])
+        elif mv_action == "Fill mean" and mv_col in num_cols:
+            df[mv_col] = pd.to_numeric(df[mv_col], errors="coerce").fillna(pd.to_numeric(df[mv_col], errors="coerce").mean())
+        elif mv_action == "Fill median" and mv_col in num_cols:
+            s = pd.to_numeric(df[mv_col], errors="coerce")
+            df[mv_col] = s.fillna(s.median())
+        elif mv_action == "Fill mode":
+            mode_val = df[mv_col].mode(dropna=True)
+            if not mode_val.empty:
+                df[mv_col] = df[mv_col].fillna(mode_val.iloc[0])
+        elif mv_action == "Fill value":
+            df[mv_col] = df[mv_col].fillna(fill_value)
+        elif mv_action == "Forward fill":
+            df[mv_col] = df[mv_col].ffill()
+        elif mv_action == "Backward fill":
+            df[mv_col] = df[mv_col].bfill()
 
-        if st.button("Apply Missing Handling"):
-            if action == "Drop rows":
-                df = df.dropna(subset=[col])
-                st.session_state["log"].append(f"Dropped rows with missing in {col}")
-            elif action == "Fill mean":
-                df[col] = df[col].fillna(df[col].mean())
-                st.session_state["log"].append(f"Filled missing in {col} with mean")
-            elif action == "Fill median":
-                df[col] = df[col].fillna(df[col].median())
-                st.session_state["log"].append(f"Filled missing in {col} with median")
-            elif action == "Fill value":
-                df[col] = df[col].fillna(value)
-                st.session_state["log"].append(f"Filled missing in {col} with {value}")
+        st.session_state["df"] = df
+        add_log("Missing value handling", mv_action, [mv_col])
+        st.success("Missing value action applied.")
+        st.rerun()
 
-            st.session_state["df"] = df
-            st.success("Done")
-
-        # -------- Duplicates --------
-        st.subheader("Duplicates")
-
-        if st.button("Remove Duplicates"):
+    # Duplicates
+    st.subheader("2. Duplicates")
+    dup_subset = st.multiselect("Subset columns for duplicate check (optional)", all_cols)
+    if st.button("Remove Duplicates"):
+        save_history()
+        before = len(df)
+        if dup_subset:
+            df = df.drop_duplicates(subset=dup_subset)
+        else:
             df = df.drop_duplicates()
+        st.session_state["df"] = df
+        add_log("Remove duplicates", f"Removed {before - len(df)} rows", dup_subset)
+        st.success("Duplicates removed.")
+        st.rerun()
+
+    # Data Type Conversion
+    st.subheader("3. Data Type Conversion")
+    type_col = st.selectbox("Column to convert", all_cols, key="type_col")
+    target_type = st.selectbox("Convert to", ["numeric", "category", "datetime", "string"])
+    dt_format = st.text_input("Datetime format (optional)", key="dt_format")
+
+    if st.button("Convert Column Type"):
+        save_history()
+        try:
+            if target_type == "numeric":
+                df[type_col] = pd.to_numeric(df[type_col], errors="coerce")
+            elif target_type == "category":
+                df[type_col] = df[type_col].astype("category")
+            elif target_type == "datetime":
+                df[type_col] = pd.to_datetime(df[type_col], format=dt_format if dt_format else None, errors="coerce")
+            elif target_type == "string":
+                df[type_col] = df[type_col].astype(str)
+
             st.session_state["df"] = df
-            st.session_state["log"].append("Removed duplicate rows")
-            st.success("Removed")
+            add_log("Convert type", target_type, [type_col])
+            st.success("Type conversion applied.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Conversion error: {e}")
 
-        # -------- Outliers --------
-        st.subheader("Outliers")
+    # Categorical Cleaning
+    st.subheader("4. Categorical Cleaning")
+    if cat_cols:
+        cat_col = st.selectbox("Categorical column", cat_cols)
+        cat_action = st.selectbox("Standardize text", ["None", "Lower", "Upper", "Title", "Trim"])
+        old_val = st.text_input("Old value")
+        new_val = st.text_input("New value")
 
-        num_cols = df.select_dtypes(include=["number"]).columns
+        if st.button("Apply Categorical Cleaning"):
+            save_history()
+            if cat_action == "Lower":
+                df[cat_col] = df[cat_col].astype(str).str.lower()
+            elif cat_action == "Upper":
+                df[cat_col] = df[cat_col].astype(str).str.upper()
+            elif cat_action == "Title":
+                df[cat_col] = df[cat_col].astype(str).str.title()
+            elif cat_action == "Trim":
+                df[cat_col] = df[cat_col].astype(str).str.strip()
 
-        if len(num_cols) > 0:
-            col = st.selectbox("Numeric column", num_cols)
+            if old_val != "":
+                df[cat_col] = df[cat_col].replace(old_val, new_val)
 
-            Q1 = df[col].quantile(0.25)
-            Q3 = df[col].quantile(0.75)
-            IQR = Q3 - Q1
-
-            low = Q1 - 1.5 * IQR
-            high = Q3 + 1.5 * IQR
-
-            if st.button("Remove Outliers"):
-                df = df[(df[col] >= low) & (df[col] <= high)]
-                st.session_state["df"] = df
-                st.session_state["log"].append(f"Removed outliers in {col}")
-                st.success("Outliers removed")
-
-        # -------- Scaling --------
-        st.subheader("Scaling")
-
-        if len(num_cols) > 0:
-            col = st.selectbox("Scale column", num_cols)
-            method = st.selectbox("Method", ["MinMax", "Z-score"])
-
-            if st.button("Apply Scaling"):
-                if method == "MinMax":
-                    df[col] = (df[col] - df[col].min()) / (df[col].max() - df[col].min())
-                else:
-                    df[col] = (df[col] - df[col].mean()) / df[col].std()
-
-                st.session_state["df"] = df
-                st.session_state["log"].append(f"Applied {method} scaling on {col}")
-                st.success("Scaled")
-
-        # -------- Categorical --------
-        st.subheader("Categorical Cleaning")
-
-        cat_cols = df.select_dtypes(include=["object"]).columns
-
-        if len(cat_cols) > 0:
-            col = st.selectbox("Categorical column", cat_cols)
-
-            option = st.selectbox("Standardize", [
-                "None", "Lower", "Upper", "Title", "Trim"
-            ])
-
-            if st.button("Apply Standardize"):
-                if option == "Lower":
-                    df[col] = df[col].str.lower()
-                elif option == "Upper":
-                    df[col] = df[col].str.upper()
-                elif option == "Title":
-                    df[col] = df[col].str.title()
-                elif option == "Trim":
-                    df[col] = df[col].str.strip()
-
-                st.session_state["df"] = df
-                st.session_state["log"].append(f"Standardized {col} using {option}")
-                st.success("Done")
-
-            old = st.text_input("Old value")
-            new = st.text_input("New value")
-
-            if st.button("Apply Mapping"):
-                df[col] = df[col].replace(old, new)
-                st.session_state["df"] = df
-                st.session_state["log"].append(f"Mapped {old} to {new} in {col}")
-                st.success("Mapped")
-
-        # -------- Column Ops --------
-        st.subheader("Column Operations")
-
-        col = st.selectbox("Rename column", df.columns)
-        new_name = st.text_input("New name")
-
-        if st.button("Rename"):
-            df = df.rename(columns={col: new_name})
             st.session_state["df"] = df
-            st.session_state["log"].append(f"Renamed column {col} to {new_name}")
-            st.success("Renamed")
+            add_log("Categorical cleaning", cat_action, [cat_col])
+            st.success("Categorical cleaning applied.")
+            st.rerun()
+    else:
+        st.info("No categorical columns found.")
 
-        drop_col = st.selectbox("Drop column", df.columns)
+    # Outliers
+    st.subheader("5. Outlier Handling")
+    if num_cols:
+        out_col = st.selectbox("Numeric column for outliers", num_cols)
+        out_method = st.selectbox("Detection method", ["IQR", "Z-score"])
+        out_action = st.selectbox("Action for outliers", ["Remove outlier rows", "Cap / Winsorize"])
 
-        if st.button("Drop"):
-            df = df.drop(columns=[drop_col])
+        if st.button("Apply Outlier Handling"):
+            save_history()
+            mask = iqr_outlier_mask(df[out_col]) if out_method == "IQR" else zscore_outlier_mask(df[out_col])
+
+            if out_action == "Remove outlier rows":
+                df = df.loc[~mask].copy()
+            else:
+                s = pd.to_numeric(df[out_col], errors="coerce")
+                df[out_col] = winsorize_series(s)
+
             st.session_state["df"] = df
-            st.session_state["log"].append(f"Dropped column {drop_col}")
-            st.success("Dropped")
+            add_log("Outlier handling", f"{out_method} + {out_action}", [out_col])
+            st.success("Outlier handling applied.")
+            st.rerun()
+    else:
+        st.info("No numeric columns found.")
 
-# -----------------------
-# PAGE C — Visualization
-# -----------------------
-elif page == "Visualization":
+    # Scaling
+    st.subheader("6. Scaling / Normalization")
+    if num_cols:
+        scale_cols = st.multiselect("Columns to scale", num_cols)
+        scale_method = st.selectbox("Scaling method", ["MinMax", "Z-score"])
 
-    st.title("📊 Visualization")
+        if st.button("Apply Scaling"):
+            if not scale_cols:
+                st.info("Choose at least one numeric column.")
+            else:
+                save_history()
+                for c in scale_cols:
+                    s = pd.to_numeric(df[c], errors="coerce")
+                    if scale_method == "MinMax":
+                        mn, mx = s.min(), s.max()
+                        if pd.notna(mn) and pd.notna(mx) and mn != mx:
+                            df[c] = (s - mn) / (mx - mn)
+                    else:
+                        std = s.std(ddof=0)
+                        if pd.notna(std) and std != 0:
+                            df[c] = (s - s.mean()) / std
+
+                st.session_state["df"] = df
+                add_log("Scaling", scale_method, scale_cols)
+                st.success("Scaling applied.")
+                st.rerun()
+    else:
+        st.info("No numeric columns found.")
+
+    # Column Operations
+    st.subheader("7. Column Operations")
+    rename_col = st.selectbox("Column to rename", all_cols, key="rename_col")
+    new_name = st.text_input("New column name", key="new_name")
+    drop_col = st.selectbox("Column to drop", all_cols, key="drop_col")
+
+    if st.button("Rename Column"):
+        if new_name.strip():
+            save_history()
+            df = df.rename(columns={rename_col: new_name.strip()})
+            st.session_state["df"] = df
+            add_log("Rename column", f"{rename_col} -> {new_name.strip()}", [rename_col])
+            st.success("Column renamed.")
+            st.rerun()
+
+    if st.button("Drop Column"):
+        save_history()
+        df = df.drop(columns=[drop_col])
+        st.session_state["df"] = df
+        add_log("Drop column", drop_col, [drop_col])
+        st.success("Column dropped.")
+        st.rerun()
+
+
+# =====================================================
+# PAGE C
+# =====================================================
+def page_visualization():
+    st.title("📈 Visualization")
 
     if st.session_state["df"] is None:
-        st.warning("Upload data first")
-    else:
-        df = st.session_state["df"]
+        st.warning("Upload data first.")
+        return
 
-        chart = st.selectbox("Chart", [
-            "Histogram", "Box", "Scatter", "Line", "Bar", "Heatmap"
-        ])
+    df = st.session_state["df"].copy()
+    num_cols = numeric_columns(df)
+    cat_cols = categorical_columns(df)
+    all_cols = df.columns.tolist()
 
-        num_cols = df.select_dtypes(include=["number"]).columns
-        cat_cols = df.select_dtypes(include=["object"]).columns
+    chart = st.selectbox(
+        "Choose chart type",
+        ["Histogram", "Box Plot", "Scatter Plot", "Line Chart", "Bar Chart", "Heatmap"]
+    )
 
-        fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(9, 5))
 
+    try:
         if chart == "Histogram":
-            col = st.selectbox("Column", num_cols)
-            ax.hist(df[col])
+            col = st.selectbox("Numeric column", num_cols)
+            ax.hist(pd.to_numeric(df[col], errors="coerce").dropna(), bins=20)
+            ax.set_title(f"Histogram of {col}")
+            ax.set_xlabel(col)
+            ax.set_ylabel("Frequency")
 
-        elif chart == "Box":
-            col = st.selectbox("Column", num_cols)
-            sns.boxplot(y=df[col], ax=ax)
+        elif chart == "Box Plot":
+            col = st.selectbox("Numeric column", num_cols, key="box_col")
+            ax.boxplot(pd.to_numeric(df[col], errors="coerce").dropna())
+            ax.set_title(f"Box Plot of {col}")
+            ax.set_ylabel(col)
 
-        elif chart == "Scatter":
-            x = st.selectbox("X", num_cols)
-            y = st.selectbox("Y", num_cols)
-            ax.scatter(df[x], df[y])
+        elif chart == "Scatter Plot":
+            x = st.selectbox("X", num_cols, key="scatter_x")
+            y = st.selectbox("Y", num_cols, key="scatter_y")
+            ax.scatter(pd.to_numeric(df[x], errors="coerce"), pd.to_numeric(df[y], errors="coerce"))
+            ax.set_title(f"{y} vs {x}")
+            ax.set_xlabel(x)
+            ax.set_ylabel(y)
 
-        elif chart == "Line":
-            x = st.selectbox("X", df.columns)
-            y = st.selectbox("Y", num_cols)
-            ax.plot(df[x], df[y])
+        elif chart == "Line Chart":
+            x = st.selectbox("X", all_cols, key="line_x")
+            y = st.selectbox("Y", num_cols, key="line_y")
+            plot_df = df[[x, y]].dropna().sort_values(by=x)
+            ax.plot(plot_df[x], pd.to_numeric(plot_df[y], errors="coerce"), marker="o")
+            ax.set_title(f"Line Chart of {y}")
+            ax.set_xlabel(x)
+            ax.set_ylabel(y)
+            ax.tick_params(axis="x", rotation=45)
 
-        elif chart == "Bar":
-            col = st.selectbox("Category", cat_cols)
-            df[col].value_counts().plot(kind="bar", ax=ax)
+        elif chart == "Bar Chart":
+            x = st.selectbox("Category column", cat_cols if cat_cols else all_cols, key="bar_x")
+            if x in df.columns:
+                counts = df[x].astype(str).value_counts().head(10)
+                ax.bar(counts.index, counts.values)
+                ax.set_title(f"Bar Chart of {x}")
+                ax.set_xlabel(x)
+                ax.set_ylabel("Count")
+                ax.tick_params(axis="x", rotation=45)
 
         elif chart == "Heatmap":
-            sns.heatmap(df.corr(numeric_only=True), annot=True, ax=ax)
+            corr = df[num_cols].corr(numeric_only=True)
+            im = ax.imshow(corr, aspect="auto")
+            ax.set_xticks(range(len(corr.columns)))
+            ax.set_xticklabels(corr.columns, rotation=45, ha="right")
+            ax.set_yticks(range(len(corr.index)))
+            ax.set_yticklabels(corr.index)
+            ax.set_title("Correlation Heatmap")
+            fig.colorbar(im, ax=ax)
 
         st.pyplot(fig)
 
-# -----------------------
-# PAGE D — Export
-# -----------------------
-elif page == "Export & Report":
+    except Exception as e:
+        st.error(f"Visualization error: {e}")
 
+
+# =====================================================
+# PAGE D
+# =====================================================
+def page_export():
     st.title("📦 Export & Report")
 
     if st.session_state["df"] is None:
-        st.warning("No dataset available")
+        st.warning("No dataset available.")
+        return
+
+    df = st.session_state["df"]
+
+    st.subheader("Preview")
+    st.dataframe(df.head(10), use_container_width=True)
+
+    csv_data = df.to_csv(index=False).encode("utf-8")
+    excel_data = make_excel(df)
+
+    st.download_button("Download CSV", csv_data, "cleaned_data.csv", mime="text/csv")
+    st.download_button(
+        "Download Excel",
+        excel_data,
+        "cleaned_data.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    st.subheader("Transformation Log")
+    if st.session_state["log"]:
+        log_df = pd.DataFrame(st.session_state["log"])
+        st.dataframe(log_df, use_container_width=True)
+
+        report_text = json.dumps(st.session_state["log"], indent=2)
+        st.download_button("Download Report", report_text, "report.json", mime="application/json")
     else:
-        df = st.session_state["df"]
+        st.info("No transformations yet.")
 
-        st.subheader("Preview")
-        st.dataframe(df.head())
 
-        # CSV
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("Download CSV", csv, "cleaned_data.csv")
+# =====================================================
+# MAIN
+# =====================================================
+def main():
+    init_state()
 
-        # Excel
-        df.to_excel("temp.xlsx", index=False)
-        with open("temp.xlsx", "rb") as f:
-            st.download_button("Download Excel", f, "cleaned_data.xlsx")
+    st.sidebar.title("Navigation")
+    page = st.sidebar.selectbox(
+        "Choose Page",
+        ["Upload & Overview", "Cleaning Studio", "Visualization", "Export & Report"]
+    )
 
-        # Log
-        st.subheader("Transformation Log")
+    st.sidebar.markdown("---")
+    if st.sidebar.button("Reset Session"):
+        reset_session()
+        st.sidebar.success("Session reset.")
+        st.rerun()
 
-        if st.session_state["log"]:
-            for step in st.session_state["log"]:
-                st.write("•", step)
-        else:
-            st.write("No transformations yet")
+    if st.session_state["history"]:
+        if st.sidebar.button("Undo Last Step"):
+            undo_last_step()
+            st.sidebar.success("Last step undone.")
+            st.rerun()
 
-        log_text = "\n".join(st.session_state["log"])
-        st.download_button("Download Report", log_text, "report.txt")
+    st.sidebar.markdown("---")
+    if st.session_state["df"] is not None:
+        st.sidebar.info(
+            f"Rows: {st.session_state['df'].shape[0]}\n\nColumns: {st.session_state['df'].shape[1]}"
+        )
+    else:
+        st.sidebar.warning("No dataset loaded.")
+
+    if page == "Upload & Overview":
+        page_upload_overview()
+    elif page == "Cleaning Studio":
+        page_cleaning()
+    elif page == "Visualization":
+        page_visualization()
+    elif page == "Export & Report":
+        page_export()
+
+
+if __name__ == "__main__":
+    main()
