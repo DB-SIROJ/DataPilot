@@ -195,37 +195,72 @@ def page_cleaning():
 
     # Missing Values
     st.subheader("1. Missing Values")
-    mv_col = st.selectbox("Column for missing values", all_cols)
-    mv_action = st.selectbox(
-        "Action",
-        ["Do nothing", "Drop rows", "Fill mean", "Fill median", "Fill mode", "Fill value", "Forward fill", "Backward fill"]
-    )
-    fill_value = ""
-    if mv_action == "Fill value":
-        fill_value = st.text_input("Custom value")
 
-    if st.button("Apply Missing Handling"):
+select_all_mv = st.checkbox("Select all columns for missing value handling")
+
+mv_cols = st.multiselect(
+    "Columns for missing values",
+    all_cols,
+    default=all_cols if select_all_mv else []
+)
+
+mv_action = st.selectbox(
+    "Action",
+    [
+        "Do nothing",
+        "Drop rows",
+        "Fill mean",
+        "Fill median",
+        "Fill mode",
+        "Fill value",
+        "Forward fill",
+        "Backward fill",
+    ]
+)
+
+fill_value = ""
+if mv_action == "Fill value":
+    fill_value = st.text_input("Custom value")
+
+if st.button("Apply Missing Handling"):
+    if not mv_cols:
+        st.warning("Please select at least one column.")
+    else:
         save_history()
+
         if mv_action == "Drop rows":
-            df = df.dropna(subset=[mv_col])
-        elif mv_action == "Fill mean" and mv_col in num_cols:
-            df[mv_col] = pd.to_numeric(df[mv_col], errors="coerce").fillna(pd.to_numeric(df[mv_col], errors="coerce").mean())
-        elif mv_action == "Fill median" and mv_col in num_cols:
-            s = pd.to_numeric(df[mv_col], errors="coerce")
-            df[mv_col] = s.fillna(s.median())
+            df = df.dropna(subset=mv_cols)
+
+        elif mv_action == "Fill mean":
+            for col in mv_cols:
+                if col in num_cols:
+                    s = pd.to_numeric(df[col], errors="coerce")
+                    df[col] = s.fillna(s.mean())
+
+        elif mv_action == "Fill median":
+            for col in mv_cols:
+                if col in num_cols:
+                    s = pd.to_numeric(df[col], errors="coerce")
+                    df[col] = s.fillna(s.median())
+
         elif mv_action == "Fill mode":
-            mode_val = df[mv_col].mode(dropna=True)
-            if not mode_val.empty:
-                df[mv_col] = df[mv_col].fillna(mode_val.iloc[0])
+            for col in mv_cols:
+                mode_val = df[col].mode(dropna=True)
+                if not mode_val.empty:
+                    df[col] = df[col].fillna(mode_val.iloc[0])
+
         elif mv_action == "Fill value":
-            df[mv_col] = df[mv_col].fillna(fill_value)
+            for col in mv_cols:
+                df[col] = df[col].fillna(fill_value)
+
         elif mv_action == "Forward fill":
-            df[mv_col] = df[mv_col].ffill()
+            df[mv_cols] = df[mv_cols].ffill()
+
         elif mv_action == "Backward fill":
-            df[mv_col] = df[mv_col].bfill()
+            df[mv_cols] = df[mv_cols].bfill()
 
         st.session_state["df"] = df
-        add_log("Missing value handling", mv_action, [mv_col])
+        add_log("Missing value handling", mv_action, mv_cols)
         st.success("Missing value action applied.")
         st.rerun()
 
