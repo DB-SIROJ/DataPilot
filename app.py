@@ -179,7 +179,7 @@ def page_upload_overview():
 # =====================================================
 # PAGE B
 # =====================================================
-   def page_cleaning():
+def page_cleaning():
     st.title("🧹 Cleaning Studio")
 
     if st.session_state["df"] is None:
@@ -215,12 +215,13 @@ def page_upload_overview():
             "Fill value",
             "Forward fill",
             "Backward fill",
-        ]
+        ],
+        key="mv_action"
     )
 
     fill_value = ""
     if mv_action == "Fill value":
-        fill_value = st.text_input("Custom value")
+        fill_value = st.text_input("Custom value", key="fill_value")
 
     if st.button("Apply Missing Handling"):
         if not mv_cols:
@@ -266,7 +267,7 @@ def page_upload_overview():
 
     # 2. Duplicates
     st.subheader("2. Duplicates")
-    dup_subset = st.multiselect("Subset columns for duplicate check (optional)", all_cols)
+    dup_subset = st.multiselect("Subset columns for duplicate check (optional)", all_cols, key="dup_subset")
 
     if st.button("Remove Duplicates"):
         save_history()
@@ -416,6 +417,7 @@ def page_upload_overview():
         st.success("Column dropped.")
         st.rerun()
 
+
 # =====================================================
 # PAGE C
 # =====================================================
@@ -440,6 +442,9 @@ def page_visualization():
 
     try:
         if chart == "Histogram":
+            if not num_cols:
+                st.warning("No numeric columns found.")
+                return
             col = st.selectbox("Numeric column", num_cols)
             ax.hist(pd.to_numeric(df[col], errors="coerce").dropna(), bins=20)
             ax.set_title(f"Histogram of {col}")
@@ -447,12 +452,18 @@ def page_visualization():
             ax.set_ylabel("Frequency")
 
         elif chart == "Box Plot":
+            if not num_cols:
+                st.warning("No numeric columns found.")
+                return
             col = st.selectbox("Numeric column", num_cols, key="box_col")
             ax.boxplot(pd.to_numeric(df[col], errors="coerce").dropna())
             ax.set_title(f"Box Plot of {col}")
             ax.set_ylabel(col)
 
         elif chart == "Scatter Plot":
+            if len(num_cols) < 2:
+                st.warning("Need at least two numeric columns.")
+                return
             x = st.selectbox("X", num_cols, key="scatter_x")
             y = st.selectbox("Y", num_cols, key="scatter_y")
             ax.scatter(pd.to_numeric(df[x], errors="coerce"), pd.to_numeric(df[y], errors="coerce"))
@@ -461,6 +472,9 @@ def page_visualization():
             ax.set_ylabel(y)
 
         elif chart == "Line Chart":
+            if not num_cols:
+                st.warning("No numeric columns found.")
+                return
             x = st.selectbox("X", all_cols, key="line_x")
             y = st.selectbox("Y", num_cols, key="line_y")
             plot_df = df[[x, y]].dropna().sort_values(by=x)
@@ -481,6 +495,9 @@ def page_visualization():
                 ax.tick_params(axis="x", rotation=45)
 
         elif chart == "Heatmap":
+            if len(num_cols) < 2:
+                st.warning("Need at least two numeric columns.")
+                return
             corr = df[num_cols].corr(numeric_only=True)
             im = ax.imshow(corr, aspect="auto")
             ax.set_xticks(range(len(corr.columns)))
@@ -536,8 +553,6 @@ def page_export():
 # =====================================================
 # MAIN
 # =====================================================
-# MAIN
-# =====================================================
 def main():
     init_state()
 
@@ -579,7 +594,6 @@ def main():
         page_visualization()
     elif page == "Export & Report":
         page_export()
-
 
 if __name__ == "__main__":
     main()
