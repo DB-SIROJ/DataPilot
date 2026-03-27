@@ -495,23 +495,29 @@ def page_export():
 # =====================================================
 # MAIN
 # =====================================================
+# MAIN
+# =====================================================
 def main():
     init_state()
 
-    st.sidebar.title("Navigation")
-    page = st.sidebar.selectbox(
-        "Choose Page",
-        ["Upload & Overview", "Cleaning Studio", "Visualization", "Export & Report"]
+    st.sidebar.markdown("### Choose Page")
+
+    page = st.sidebar.radio(
+        "",
+        ["Upload & Overview", "Cleaning Studio", "Visualization", "Export & Report"],
+        label_visibility="collapsed"
     )
 
-    st.sidebar.markdown("---")
-    if st.sidebar.button("Reset Session"):
+    st.sidebar.markdown("<br>", unsafe_allow_html=True)
+    st.sidebar.markdown("## Session Controls")
+
+    if st.sidebar.button("Reset session"):
         reset_session()
         st.sidebar.success("Session reset.")
         st.rerun()
 
     if st.session_state["history"]:
-        if st.sidebar.button("Undo Last Step"):
+        if st.sidebar.button("Undo last step"):
             undo_last_step()
             st.sidebar.success("Last step undone.")
             st.rerun()
