@@ -38,8 +38,13 @@ def save_history():
 
 
 def undo_last_step():
+    if st.sidebar.button("Undo last step"):
     if st.session_state["history"]:
-        st.session_state["df"] = st.session_state["history"].pop()
+        undo_last_step()
+        st.sidebar.success("Last step undone.")
+        st.rerun()
+    else:
+        st.sidebar.warning("Nothing to undo.")
 
 
 def add_log(action, details="", columns=None):
