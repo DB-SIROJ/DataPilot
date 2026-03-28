@@ -189,7 +189,6 @@ def page_cleaning():
     df = st.session_state["df"].copy()
     all_cols = df.columns.tolist()
     num_cols = numeric_columns(df)
-    cat_cols = categorical_columns(df)
 
     st.dataframe(df.head(10), use_container_width=True)
 
@@ -229,6 +228,9 @@ def page_cleaning():
         else:
             save_history()
 
+            before_rows = len(df)
+            before_missing = int(df[mv_cols].isnull().sum().sum())
+
             if mv_action == "Drop rows":
                 df = df.dropna(subset=mv_cols)
 
@@ -260,10 +262,21 @@ def page_cleaning():
             elif mv_action == "Backward fill":
                 df[mv_cols] = df[mv_cols].bfill()
 
+            after_rows = len(df)
+            after_missing = int(df[mv_cols].isnull().sum().sum())
+            total_missing_now = int(df.isnull().sum().sum())
+
             st.session_state["df"] = df
             add_log("Missing value handling", mv_action, mv_cols)
-            st.success("Missing value action applied.")
-            st.rerun()
+
+            if mv_action == "Drop rows":
+                st.success("Row drop applied successfully.")
+            else:
+                st.success("Missing value handling applied successfully.")
+
+            st.info(f"Rows: {before_rows} → {after_rows}")
+            st.info(f"Missing values: {before_missing} → {after_missing}")
+            st.success(f"Total missing values now: {total_missing_now}")
 
     # 2. Duplicates
     st.subheader("2. Duplicates")
@@ -271,22 +284,29 @@ def page_cleaning():
 
     if st.button("Remove Duplicates"):
         save_history()
-        before = len(df)
+
+        before_rows = len(df)
+        before_duplicates = int(df.duplicated(subset=dup_subset if dup_subset else None).sum())
+
         if dup_subset:
             df = df.drop_duplicates(subset=dup_subset)
         else:
             df = df.drop_duplicates()
 
+        after_rows = len(df)
+        after_duplicates = int(df.duplicated(subset=dup_subset if dup_subset else None).sum())
+
         st.session_state["df"] = df
-        add_log("Remove duplicates", f"Removed {before - len(df)} rows", dup_subset)
-        st.success("Duplicates removed.")
-        st.rerun()
+        add_log("Remove duplicates", f"Removed {before_rows - after_rows} rows", dup_subset)
+
+        st.success("Duplicates removed successfully.")
+        st.info(f"Rows: {before_rows} → {after_rows}")
+        st.info(f"Duplicate rows: {before_duplicates} → {after_duplicates}")
 
     # 3. Data Type Conversion
     st.subheader("3. Data Type Conversion")
     type_col = st.selectbox("Column to convert", all_cols, key="type_col")
     target_type = st.selectbox("Convert to", ["numeric", "category", "datetime", "string"], key="target_type")
-    dt_format = st.text_input("Datetime format (optional)", key="dt_format")
 
     if st.button("Convert Column Type"):
         save_history()
@@ -296,53 +316,18 @@ def page_cleaning():
             elif target_type == "category":
                 df[type_col] = df[type_col].astype("category")
             elif target_type == "datetime":
-                df[type_col] = pd.to_datetime(
-                    df[type_col],
-                    format=dt_format if dt_format else None,
-                    errors="coerce"
-                )
+                df[type_col] = pd.to_datetime(df[type_col], errors="coerce")
             elif target_type == "string":
                 df[type_col] = df[type_col].astype(str)
 
             st.session_state["df"] = df
             add_log("Convert type", target_type, [type_col])
-            st.success("Type conversion applied.")
-            st.rerun()
+            st.success("Type conversion applied successfully.")
         except Exception as e:
             st.error(f"Conversion error: {e}")
 
-    # 4. Categorical Cleaning
-    st.subheader("4. Categorical Cleaning")
-    if cat_cols:
-        cat_col = st.selectbox("Categorical column", cat_cols, key="cat_col")
-        cat_action = st.selectbox("Standardize text", ["None", "Lower", "Upper", "Title", "Trim"], key="cat_action")
-        old_val = st.text_input("Old value", key="old_val")
-        new_val = st.text_input("New value", key="new_val")
-
-        if st.button("Apply Categorical Cleaning"):
-            save_history()
-
-            if cat_action == "Lower":
-                df[cat_col] = df[cat_col].astype(str).str.lower()
-            elif cat_action == "Upper":
-                df[cat_col] = df[cat_col].astype(str).str.upper()
-            elif cat_action == "Title":
-                df[cat_col] = df[cat_col].astype(str).str.title()
-            elif cat_action == "Trim":
-                df[cat_col] = df[cat_col].astype(str).str.strip()
-
-            if old_val != "":
-                df[cat_col] = df[cat_col].replace(old_val, new_val)
-
-            st.session_state["df"] = df
-            add_log("Categorical cleaning", cat_action, [cat_col])
-            st.success("Categorical cleaning applied.")
-            st.rerun()
-    else:
-        st.info("No categorical columns found.")
-
-    # 5. Outlier Handling
-    st.subheader("5. Outlier Handling")
+    # 4. Outlier Handling
+    st.subheader("4. Outlier Handling")
     if num_cols:
         out_col = st.selectbox("Numeric column for outliers", num_cols, key="out_col")
         out_method = st.selectbox("Detection method", ["IQR", "Z-score"], key="out_method")
@@ -350,6 +335,8 @@ def page_cleaning():
 
         if st.button("Apply Outlier Handling"):
             save_history()
+            before_rows = len(df)
+
             mask = iqr_outlier_mask(df[out_col]) if out_method == "IQR" else zscore_outlier_mask(df[out_col])
 
             if out_action == "Remove outlier rows":
@@ -358,15 +345,18 @@ def page_cleaning():
                 s = pd.to_numeric(df[out_col], errors="coerce")
                 df[out_col] = winsorize_series(s)
 
+            after_rows = len(df)
+
             st.session_state["df"] = df
             add_log("Outlier handling", f"{out_method} + {out_action}", [out_col])
-            st.success("Outlier handling applied.")
-            st.rerun()
+
+            st.success("Outlier handling applied successfully.")
+            st.info(f"Rows: {before_rows} → {after_rows}")
     else:
         st.info("No numeric columns found.")
 
-    # 6. Scaling / Normalization
-    st.subheader("6. Scaling / Normalization")
+    # 5. Scaling / Normalization
+    st.subheader("5. Scaling / Normalization")
     if num_cols:
         scale_cols = st.multiselect("Columns to scale", num_cols, key="scale_cols")
         scale_method = st.selectbox("Scaling method", ["MinMax", "Z-score"], key="scale_method")
@@ -389,13 +379,12 @@ def page_cleaning():
 
                 st.session_state["df"] = df
                 add_log("Scaling", scale_method, scale_cols)
-                st.success("Scaling applied.")
-                st.rerun()
+                st.success("Scaling applied successfully.")
     else:
         st.info("No numeric columns found.")
 
-    # 7. Column Operations
-    st.subheader("7. Column Operations")
+    # 6. Column Operations
+    st.subheader("6. Column Operations")
     rename_col = st.selectbox("Column to rename", all_cols, key="rename_col")
     new_name = st.text_input("New column name", key="new_name")
     drop_col = st.selectbox("Column to drop", all_cols, key="drop_col")
@@ -406,16 +395,14 @@ def page_cleaning():
             df = df.rename(columns={rename_col: new_name.strip()})
             st.session_state["df"] = df
             add_log("Rename column", f"{rename_col} -> {new_name.strip()}", [rename_col])
-            st.success("Column renamed.")
-            st.rerun()
+            st.success("Column renamed successfully.")
 
     if st.button("Drop Column"):
         save_history()
         df = df.drop(columns=[drop_col])
         st.session_state["df"] = df
         add_log("Drop column", drop_col, [drop_col])
-        st.success("Column dropped.")
-        st.rerun()
+        st.success("Column dropped successfully.")
 
 
 # =====================================================
