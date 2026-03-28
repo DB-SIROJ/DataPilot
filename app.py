@@ -220,14 +220,10 @@ def page_cleaning():
     mv_action = st.selectbox(
         "Action",
         [
-            "Do nothing",
             "Drop rows",
             "Fill mean",
             "Fill median",
             "Fill mode",
-            "Fill value",
-            "Forward fill",
-            "Backward fill",
         ],
         key="mv_action"
     )
@@ -265,16 +261,6 @@ def page_cleaning():
                     mode_val = df[col].mode(dropna=True)
                     if not mode_val.empty:
                         df[col] = df[col].fillna(mode_val.iloc[0])
-
-            elif mv_action == "Fill value":
-                for col in mv_cols:
-                    df[col] = df[col].fillna(fill_value)
-
-            elif mv_action == "Forward fill":
-                df[mv_cols] = df[mv_cols].ffill()
-
-            elif mv_action == "Backward fill":
-                df[mv_cols] = df[mv_cols].bfill()
 
             after_rows = len(df)
             after_missing = int(df[mv_cols].isnull().sum().sum())
