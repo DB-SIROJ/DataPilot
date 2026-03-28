@@ -38,13 +38,8 @@ def save_history():
 
 
 def undo_last_step():
-    if st.sidebar.button("Undo last step"):
-        if st.session_state["history"]:
-            undo_last_step()
-            st.sidebar.success("Last step undone.")
-            st.rerun()
-        else:
-            st.sidebar.warning("Nothing to undo.")
+    if st.session_state["history"]:
+        st.session_state["df"] = st.session_state["history"].pop()    
 
 def add_log(action, details="", columns=None):
     st.session_state["log"].append({
@@ -90,6 +85,7 @@ def make_excel(df):
 def main():
     init_state()
 
+    # Sidebar navigation
     st.sidebar.markdown("### Choose Page")
 
     page = st.sidebar.radio(
@@ -101,18 +97,24 @@ def main():
     st.sidebar.markdown("<br>", unsafe_allow_html=True)
     st.sidebar.markdown("## Session Controls")
 
+    # Reset button
     if st.sidebar.button("Reset session"):
         reset_session()
         st.sidebar.success("Session reset.")
         st.rerun()
 
-    if st.session_state["history"]:
-        if st.sidebar.button("Undo last step"):
+    # Undo button (always visible)
+    if st.sidebar.button("Undo last step"):
+        if st.session_state["history"]:
             undo_last_step()
             st.sidebar.success("Last step undone.")
             st.rerun()
+        else:
+            st.sidebar.warning("Nothing to undo.")
 
     st.sidebar.markdown("---")
+
+    # Dataset info
     if st.session_state["df"] is not None:
         st.sidebar.info(
             f"Rows: {st.session_state['df'].shape[0]}\n\nColumns: {st.session_state['df'].shape[1]}"
@@ -120,6 +122,7 @@ def main():
     else:
         st.sidebar.warning("No dataset loaded.")
 
+    # Page routing
     if page == "Upload & Overview":
         page_upload_overview()
     elif page == "Cleaning Studio":
