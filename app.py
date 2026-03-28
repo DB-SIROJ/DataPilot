@@ -371,6 +371,9 @@ def page_cleaning():
 # =====================================================
 # PAGE C
 # =====================================================
+d# =====================================================
+# PAGE C
+# =====================================================
 def page_visualization():
     st.title("📈 Visualization")
 
@@ -379,8 +382,8 @@ def page_visualization():
         return
 
     df = st.session_state["df"].copy()
-    num_cols = numeric_columns(df)
-    cat_cols = categorical_columns(df)
+    num_cols = df.select_dtypes(include=["number"]).columns.tolist()
+    cat_cols = df.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
     all_cols = df.columns.tolist()
 
     chart = st.selectbox(
@@ -395,8 +398,11 @@ def page_visualization():
             if not num_cols:
                 st.warning("No numeric columns found.")
                 return
+
             col = st.selectbox("Numeric column", num_cols)
-            ax.hist(pd.to_numeric(df[col], errors="coerce").dropna(), bins=20)
+            values = pd.to_numeric(df[col], errors="coerce").dropna()
+
+            ax.hist(values, bins=20)
             ax.set_title(f"Histogram of {col}")
             ax.set_xlabel(col)
             ax.set_ylabel("Frequency")
@@ -405,8 +411,11 @@ def page_visualization():
             if not num_cols:
                 st.warning("No numeric columns found.")
                 return
+
             col = st.selectbox("Numeric column", num_cols, key="box_col")
-            ax.boxplot(pd.to_numeric(df[col], errors="coerce").dropna())
+            values = pd.to_numeric(df[col], errors="coerce").dropna()
+
+            ax.boxplot(values)
             ax.set_title(f"Box Plot of {col}")
             ax.set_ylabel(col)
 
@@ -414,9 +423,14 @@ def page_visualization():
             if len(num_cols) < 2:
                 st.warning("Need at least two numeric columns.")
                 return
-            x = st.selectbox("X", num_cols, key="scatter_x")
-            y = st.selectbox("Y", num_cols, key="scatter_y")
-            ax.scatter(pd.to_numeric(df[x], errors="coerce"), pd.to_numeric(df[y], errors="coerce"))
+
+            x = st.selectbox("X column", num_cols, key="scatter_x")
+            y = st.selectbox("Y column", num_cols, key="scatter_y")
+
+            x_values = pd.to_numeric(df[x], errors="coerce")
+            y_values = pd.to_numeric(df[y], errors="coerce")
+
+            ax.scatter(x_values, y_values)
             ax.set_title(f"{y} vs {x}")
             ax.set_xlabel(x)
             ax.set_ylabel(y)
@@ -425,9 +439,13 @@ def page_visualization():
             if not num_cols:
                 st.warning("No numeric columns found.")
                 return
-            x = st.selectbox("X", all_cols, key="line_x")
-            y = st.selectbox("Y", num_cols, key="line_y")
-            plot_df = df[[x, y]].dropna().sort_values(by=x)
+
+            x = st.selectbox("X column", all_cols, key="line_x")
+            y = st.selectbox("Y column", num_cols, key="line_y")
+
+            plot_df = df[[x, y]].dropna().copy()
+            plot_df = plot_df.sort_values(by=x)
+
             ax.plot(plot_df[x], pd.to_numeric(plot_df[y], errors="coerce"), marker="o")
             ax.set_title(f"Line Chart of {y}")
             ax.set_xlabel(x)
@@ -435,20 +453,24 @@ def page_visualization():
             ax.tick_params(axis="x", rotation=45)
 
         elif chart == "Bar Chart":
-            x = st.selectbox("Category column", cat_cols if cat_cols else all_cols, key="bar_x")
-            if x in df.columns:
-                counts = df[x].astype(str).value_counts().head(10)
-                ax.bar(counts.index, counts.values)
-                ax.set_title(f"Bar Chart of {x}")
-                ax.set_xlabel(x)
-                ax.set_ylabel("Count")
-                ax.tick_params(axis="x", rotation=45)
+            source_cols = cat_cols if cat_cols else all_cols
+            col = st.selectbox("Category column", source_cols, key="bar_col")
+
+            counts = df[col].astype(str).value_counts().head(10)
+
+            ax.bar(counts.index, counts.values)
+            ax.set_title(f"Bar Chart of {col}")
+            ax.set_xlabel(col)
+            ax.set_ylabel("Count")
+            ax.tick_params(axis="x", rotation=45)
 
         elif chart == "Heatmap":
             if len(num_cols) < 2:
                 st.warning("Need at least two numeric columns.")
                 return
+
             corr = df[num_cols].corr(numeric_only=True)
+
             im = ax.imshow(corr, aspect="auto")
             ax.set_xticks(range(len(corr.columns)))
             ax.set_xticklabels(corr.columns, rotation=45, ha="right")
