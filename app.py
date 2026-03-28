@@ -206,6 +206,7 @@ def page_cleaning():
     st.dataframe(df.head(10), use_container_width=True)
 
     # 1. Missing Values
+        # 1. Missing Values
     st.subheader("1. Missing Values")
 
     select_all_mv = st.checkbox("Select all columns for missing value handling")
@@ -223,13 +224,14 @@ def page_cleaning():
             "Fill mean",
             "Fill median",
             "Fill mode",
+            "Fill constant",
         ],
         key="mv_action"
     )
 
     fill_value = ""
-    if mv_action == "Fill value":
-        fill_value = st.text_input("Custom value", key="fill_value")
+    if mv_action == "Fill constant":
+        fill_value = st.text_input("Enter constant value", key="fill_value")
 
     if st.button("Apply Missing Handling"):
         if not mv_cols:
@@ -260,6 +262,10 @@ def page_cleaning():
                     mode_val = df[col].mode(dropna=True)
                     if not mode_val.empty:
                         df[col] = df[col].fillna(mode_val.iloc[0])
+
+            elif mv_action == "Fill constant":
+                for col in mv_cols:
+                    df[col] = df[col].fillna(fill_value)
 
             after_rows = len(df)
             after_missing = int(df[mv_cols].isnull().sum().sum())
