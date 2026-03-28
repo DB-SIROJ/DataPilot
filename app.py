@@ -2,9 +2,7 @@ import io
 import json
 from datetime import datetime
 
-import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import streamlit as st
 
 st.set_page_config(page_title="AI-Assisted Data Wrangler & Visualizer", layout="wide")
@@ -75,10 +73,6 @@ def numeric_columns(df):
     return df.select_dtypes(include=["number"]).columns.tolist()
 
 
-def categorical_columns(df):
-    return df.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-
-
 def make_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -86,29 +80,50 @@ def make_excel(df):
     return output.getvalue()
 
 
-def winsorize_series(series, low_q=0.01, high_q=0.99):
-    low = series.quantile(low_q)
-    high = series.quantile(high_q)
-    return series.clip(lower=low, upper=high)
+# =====================================================
+# MAIN
+# =====================================================
+def main():
+    init_state()
 
+    st.sidebar.markdown("### Choose Page")
 
-def iqr_outlier_mask(series):
-    s = pd.to_numeric(series, errors="coerce")
-    q1 = s.quantile(0.25)
-    q3 = s.quantile(0.75)
-    iqr = q3 - q1
-    low = q1 - 1.5 * iqr
-    high = q3 + 1.5 * iqr
-    return (s < low) | (s > high)
+    page = st.sidebar.radio(
+        "",
+        ["Upload & Overview", "Cleaning Studio", "Visualization", "Export & Report"],
+        label_visibility="collapsed"
+    )
 
+    st.sidebar.markdown("<br>", unsafe_allow_html=True)
+    st.sidebar.markdown("## Session Controls")
 
-def zscore_outlier_mask(series):
-    s = pd.to_numeric(series, errors="coerce")
-    std = s.std(ddof=0)
-    if std == 0 or pd.isna(std):
-        return pd.Series([False] * len(series), index=series.index)
-    z = (s - s.mean()) / std
-    return z.abs() > 3
+    if st.sidebar.button("Reset session"):
+        reset_session()
+        st.sidebar.success("Session reset.")
+        st.rerun()
+
+    if st.session_state["history"]:
+        if st.sidebar.button("Undo last step"):
+            undo_last_step()
+            st.sidebar.success("Last step undone.")
+            st.rerun()
+
+    st.sidebar.markdown("---")
+    if st.session_state["df"] is not None:
+        st.sidebar.info(
+            f"Rows: {st.session_state['df'].shape[0]}\n\nColumns: {st.session_state['df'].shape[1]}"
+        )
+    else:
+        st.sidebar.warning("No dataset loaded.")
+
+    if page == "Upload & Overview":
+        page_upload_overview()
+    elif page == "Cleaning Studio":
+        page_cleaning()
+    elif page == "Visualization":
+        page_visualization()
+    elif page == "Export & Report":
+        page_export()
 
 
 # =====================================================
@@ -137,11 +152,12 @@ def page_upload_overview():
         return
 
     df = st.session_state["df"]
+    total_missing = int(df.isnull().sum().sum())
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Rows", df.shape[0])
     c2.metric("Columns", df.shape[1])
-    c3.metric("Duplicate Rows", int(df.duplicated().sum()))
+    c3.metric("Missing Values", total_missing)
 
     st.subheader("Column Types")
     dtype_df = pd.DataFrame({
@@ -153,7 +169,7 @@ def page_upload_overview():
     st.subheader("Preview")
     st.dataframe(df.head(10), use_container_width=True)
 
-    st.subheader("Missing Values")
+    st.subheader("Missing Values by Column")
     missing_df = pd.DataFrame({
         "Column": df.columns,
         "Missing Count": df.isnull().sum().values,
@@ -167,13 +183,6 @@ def page_upload_overview():
         st.dataframe(num_df.describe(), use_container_width=True)
     else:
         st.info("No numeric columns found.")
-
-    st.subheader("Categorical Summary")
-    cat_df = df.select_dtypes(include=["object", "category", "bool"])
-    if not cat_df.empty:
-        st.dataframe(cat_df.astype(str).describe(), use_container_width=True)
-    else:
-        st.info("No categorical columns found.")
 
 
 # =====================================================
@@ -280,7 +289,12 @@ def page_cleaning():
 
     # 2. Duplicates
     st.subheader("2. Duplicates")
-    dup_subset = st.multiselect("Subset columns for duplicate check (optional)", all_cols, key="dup_subset")
+
+    dup_subset = st.multiselect(
+        "Subset columns for duplicate check (optional)",
+        all_cols,
+        key="dup_subset"
+    )
 
     if st.button("Remove Duplicates"):
         save_history()
@@ -305,8 +319,13 @@ def page_cleaning():
 
     # 3. Data Type Conversion
     st.subheader("3. Data Type Conversion")
+
     type_col = st.selectbox("Column to convert", all_cols, key="type_col")
-    target_type = st.selectbox("Convert to", ["numeric", "category", "datetime", "string"], key="target_type")
+    target_type = st.selectbox(
+        "Convert to",
+        ["numeric", "category", "datetime", "string"],
+        key="target_type"
+    )
 
     if st.button("Convert Column Type"):
         save_history()
@@ -326,65 +345,9 @@ def page_cleaning():
         except Exception as e:
             st.error(f"Conversion error: {e}")
 
-    # 4. Outlier Handling
-    st.subheader("4. Outlier Handling")
-    if num_cols:
-        out_col = st.selectbox("Numeric column for outliers", num_cols, key="out_col")
-        out_method = st.selectbox("Detection method", ["IQR", "Z-score"], key="out_method")
-        out_action = st.selectbox("Action for outliers", ["Remove outlier rows", "Cap / Winsorize"], key="out_action")
+    # 4. Column Operations
+    st.subheader("4. Column Operations")
 
-        if st.button("Apply Outlier Handling"):
-            save_history()
-            before_rows = len(df)
-
-            mask = iqr_outlier_mask(df[out_col]) if out_method == "IQR" else zscore_outlier_mask(df[out_col])
-
-            if out_action == "Remove outlier rows":
-                df = df.loc[~mask].copy()
-            else:
-                s = pd.to_numeric(df[out_col], errors="coerce")
-                df[out_col] = winsorize_series(s)
-
-            after_rows = len(df)
-
-            st.session_state["df"] = df
-            add_log("Outlier handling", f"{out_method} + {out_action}", [out_col])
-
-            st.success("Outlier handling applied successfully.")
-            st.info(f"Rows: {before_rows} → {after_rows}")
-    else:
-        st.info("No numeric columns found.")
-
-    # 5. Scaling / Normalization
-    st.subheader("5. Scaling / Normalization")
-    if num_cols:
-        scale_cols = st.multiselect("Columns to scale", num_cols, key="scale_cols")
-        scale_method = st.selectbox("Scaling method", ["MinMax", "Z-score"], key="scale_method")
-
-        if st.button("Apply Scaling"):
-            if not scale_cols:
-                st.info("Choose at least one numeric column.")
-            else:
-                save_history()
-                for c in scale_cols:
-                    s = pd.to_numeric(df[c], errors="coerce")
-                    if scale_method == "MinMax":
-                        mn, mx = s.min(), s.max()
-                        if pd.notna(mn) and pd.notna(mx) and mn != mx:
-                            df[c] = (s - mn) / (mx - mn)
-                    else:
-                        std = s.std(ddof=0)
-                        if pd.notna(std) and std != 0:
-                            df[c] = (s - s.mean()) / std
-
-                st.session_state["df"] = df
-                add_log("Scaling", scale_method, scale_cols)
-                st.success("Scaling applied successfully.")
-    else:
-        st.info("No numeric columns found.")
-
-    # 6. Column Operations
-    st.subheader("6. Column Operations")
     rename_col = st.selectbox("Column to rename", all_cols, key="rename_col")
     new_name = st.text_input("New column name", key="new_name")
     drop_col = st.selectbox("Column to drop", all_cols, key="drop_col")
@@ -536,51 +499,6 @@ def page_export():
     else:
         st.info("No transformations yet.")
 
-
-# =====================================================
-# MAIN
-# =====================================================
-def main():
-    init_state()
-
-    st.sidebar.markdown("### Choose Page")
-
-    page = st.sidebar.radio(
-        "",
-        ["Upload & Overview", "Cleaning Studio", "Visualization", "Export & Report"],
-        label_visibility="collapsed"
-    )
-
-    st.sidebar.markdown("<br>", unsafe_allow_html=True)
-    st.sidebar.markdown("## Session Controls")
-
-    if st.sidebar.button("Reset session"):
-        reset_session()
-        st.sidebar.success("Session reset.")
-        st.rerun()
-
-    if st.session_state["history"]:
-        if st.sidebar.button("Undo last step"):
-            undo_last_step()
-            st.sidebar.success("Last step undone.")
-            st.rerun()
-
-    st.sidebar.markdown("---")
-    if st.session_state["df"] is not None:
-        st.sidebar.info(
-            f"Rows: {st.session_state['df'].shape[0]}\n\nColumns: {st.session_state['df'].shape[1]}"
-        )
-    else:
-        st.sidebar.warning("No dataset loaded.")
-
-    if page == "Upload & Overview":
-        page_upload_overview()
-    elif page == "Cleaning Studio":
-        page_cleaning()
-    elif page == "Visualization":
-        page_visualization()
-    elif page == "Export & Report":
-        page_export()
 
 if __name__ == "__main__":
     main()
